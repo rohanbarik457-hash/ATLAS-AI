@@ -1,0 +1,326 @@
+
+name: Atlas Enterprise AI CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - README.md
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-deployment
+  cancel-in-progress: false
+
+jobs:
+
+  # ==========================================
+  # 1. CONTINUOUS INTEGRATION
+  # ==========================================
+
+  integration:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Python Syntax
+        run: |
+          python -m compileall -q app worker scripts
+
+  # ==========================================
+  # 2. CONTINUOUS DELIVERY - BUILD AND PUSH ECR
+  # ==========================================
+
+  build-and-push-ecr-image:
+    name: Continuous Delivery
+    needs: integration
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ECR_REGISTRY"
+          test -n "$ECR_REPOSITORY"
+
+          IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "Building Docker image..."
+          docker build -t "$IMAGE" .
+
+          echo "Pushing image to Amazon ECR..."
+          docker push "$IMAGE"
+
+          echo "Docker image pushed successfully"
+
+  # ==========================================
+  # 3. CONTINUOUS DEPLOYMENT - EC2
+  # ==========================================
+
+  continuous-deployment:
+    name: Continuous Deployment
+    needs: build-and-push-ecr-image
+
+    runs-on: [self-hosted, linux, x64, atlas-ec2]
+    environment: production
+
+    steps:
+
+      # ----------------------------------------
+      # AWS AUTHENTICATION
+      # ----------------------------------------
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ----------------------------------------
+      # CONSTRUCT DOCKER IMAGE URI
+      # ----------------------------------------
+
+      - name: Construct ECR Image URI
+        id: image
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
+
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "ECR image URI constructed successfully"
+
+      # ----------------------------------------
+      # PULL IMAGE
+      # ----------------------------------------
+
+      - name: Pull Docker Image
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+
+      # ----------------------------------------
+      # VALIDATE APPLICATION SECRETS
+      # ----------------------------------------
+
+      - name: Validate Application Secrets
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+          BEDROCK_EMBED_MODEL: ${{ secrets.BEDROCK_EMBED_MODEL }}
+          BEDROCK_CHAT_MODEL: ${{ secrets.BEDROCK_CHAT_MODEL }}
+          EMBED_DIM: ${{ secrets.EMBED_DIM }}
+
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
+          PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
+          PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
+          PINECONE_READY_TIMEOUT: ${{ secrets.PINECONE_READY_TIMEOUT }}
+
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+          RIUS_API_KEY: ${{ secrets.RIUS_API_KEY }}
+          RIUS_SERVICE_NAME: ${{ secrets.RIUS_SERVICE_NAME }}
+          RIUS_DISABLED: ${{ secrets.RIUS_DISABLED }}
+          RIUS_CAPTURE_CONTENT: ${{ secrets.RIUS_CAPTURE_CONTENT }}
+
+          HITL_ENABLED: ${{ secrets.HITL_ENABLED }}
+          MEMORY_TURNS: ${{ secrets.MEMORY_TURNS }}
+
+        run: |
+          set -euo pipefail
+
+          REQUIRED=(
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
+            AWS_REGION
+            S3_BUCKET
+            BEDROCK_EMBED_MODEL
+            BEDROCK_CHAT_MODEL
+            EMBED_DIM
+            PINECONE_API_KEY
+            PINECONE_INDEX_NAME
+            PINECONE_CLOUD
+            PINECONE_REGION
+            PINECONE_READY_TIMEOUT
+            DATABASE_URL
+            RIUS_API_KEY
+            RIUS_SERVICE_NAME
+            RIUS_DISABLED
+            RIUS_CAPTURE_CONTENT
+            HITL_ENABLED
+            MEMORY_TURNS
+          )
+
+          for name in "${REQUIRED[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing Environment Secret: $name"
+              exit 1
+            fi
+          done
+
+          echo "All required application secrets are available"
+
+      # ----------------------------------------
+      # STOP EXISTING CONTAINER
+      # ----------------------------------------
+
+      - name: Stop Old Container
+        run: |
+          docker rm -f atlas-enterprise-ai || true
+
+      # ----------------------------------------
+      # START NEW CONTAINER WITH GITHUB SECRETS
+      # ----------------------------------------
+
+      - name: Start New Container
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+
+          # AWS
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+          # Bedrock
+          BEDROCK_EMBED_MODEL: ${{ secrets.BEDROCK_EMBED_MODEL }}
+          BEDROCK_CHAT_MODEL: ${{ secrets.BEDROCK_CHAT_MODEL }}
+          EMBED_DIM: ${{ secrets.EMBED_DIM }}
+
+          # Pinecone
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
+          PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
+          PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
+          PINECONE_READY_TIMEOUT: ${{ secrets.PINECONE_READY_TIMEOUT }}
+
+          # PostgreSQL
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+          # RIUS Observability
+          RIUS_API_KEY: ${{ secrets.RIUS_API_KEY }}
+          RIUS_SERVICE_NAME: ${{ secrets.RIUS_SERVICE_NAME }}
+          RIUS_DISABLED: ${{ secrets.RIUS_DISABLED }}
+          RIUS_CAPTURE_CONTENT: ${{ secrets.RIUS_CAPTURE_CONTENT }}
+
+          # Application
+          HITL_ENABLED: ${{ secrets.HITL_ENABLED }}
+          MEMORY_TURNS: ${{ secrets.MEMORY_TURNS }}
+
+        run: |
+          set -euo pipefail
+
+          docker run -d \
+            --name atlas-enterprise-ai \
+            --restart unless-stopped \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_REGION \
+            -e AWS_DEFAULT_REGION \
+            -e S3_BUCKET \
+            -e BEDROCK_EMBED_MODEL \
+            -e BEDROCK_CHAT_MODEL \
+            -e EMBED_DIM \
+            -e PINECONE_API_KEY \
+            -e PINECONE_INDEX_NAME \
+            -e PINECONE_CLOUD \
+            -e PINECONE_REGION \
+            -e PINECONE_READY_TIMEOUT \
+            -e DATABASE_URL \
+            -e RIUS_API_KEY \
+            -e RIUS_SERVICE_NAME \
+            -e RIUS_DISABLED \
+            -e RIUS_CAPTURE_CONTENT \
+            -e HITL_ENABLED \
+            -e MEMORY_TURNS \
+            -p 8000:8000 \
+            "$IMAGE"
+
+      # ----------------------------------------
+      # VERIFY DEPLOYMENT
+      # ----------------------------------------
+
+      - name: Verify Deployment
+        run: |
+          set -euo pipefail
+
+          sleep 10
+
+          if ! docker inspect \
+            -f '{{.State.Running}}' \
+            atlas-enterprise-ai | grep -qx true; then
+
+            echo "::error::Container is not running"
+            docker logs --tail 100 atlas-enterprise-ai
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            --retry 5 \
+            --retry-delay 3 \
+            http://127.0.0.1:8000/ \
+            > /dev/null
+
+          echo "Atlas Enterprise AI deployed successfully"
+
+      # ----------------------------------------
+      # CLEANUP
+      # ----------------------------------------
+
+      - name: Clean Unused Docker Images
+        run: |
+          docker image prune -f
