@@ -279,6 +279,13 @@
   }
 
   /* ---------- Documents ---------- */
+  async function computeSHA256(file) {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function loadDocs() {
     const docsEl = $('docs');
     docsEl.innerHTML = '<div class="empty">Loading documents...</div>';
@@ -288,27 +295,114 @@
       if (!r.documents.length) { docsEl.innerHTML = '<div class="empty">No documents uploaded yet.</div>'; return; }
       r.documents.forEach(d => {
         const row = document.createElement('div'); row.className = 'doc-row';
-        const statusClass = d.status === 'ready' ? 'ready' : d.status === 'pending' ? 'pending' : 'processing';
-        row.innerHTML = `<i class="fa-solid fa-file-lines"></i><span class="doc-title">${esc(d.title)}</span><span class="doc-status ${statusClass}">${esc(d.status)} (v${d.current_version})</span>`;
+        const st = (d.status || 'queued').toLowerCase();
+        const statusClass = ['ready', 'processing', 'queued', 'pending', 'failed'].includes(st) ? st : 'queued';
+
+        let actionsHtml = '';
+        if (st === 'failed') {
+          actionsHtml = `<button class="btn retry-btn" data-retry="${esc(String(d.id))}" title="Retry ingestion"><i class="fa-solid fa-rotate-right"></i> Retry</button>`;
+        }
+
+        let errorHtml = '';
+        if (st === 'failed' && d.error_message) {
+          errorHtml = `<div class="doc-error"><i class="fa-solid fa-circle-exclamation"></i> ${esc(d.error_message)}</div>`;
+        }
+
+        row.innerHTML = `
+          <div class="doc-main">
+            <i class="fa-solid fa-file-lines"></i>
+            <div class="doc-info">
+              <span class="doc-title">${esc(d.title)}</span>
+              ${errorHtml}
+            </div>
+            <span class="doc-status ${statusClass}">${esc(st)} (v${d.current_version})</span>
+            ${actionsHtml}
+          </div>
+        `;
         docsEl.appendChild(row);
       });
     } catch (e) { docsEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
 
+  $('docs').addEventListener('click', async e => {
+    const btn = e.target.closest('button[data-retry]');
+    if (!btn) return;
+    const docId = btn.dataset.retry;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Retrying...';
+    toast('Retrying ingestion...');
+    try {
+      await api(`/api/documents/${encodeURIComponent(docId)}/retry`, { method: 'POST' });
+      toast('Document indexed successfully!');
+      loadDocs();
+    } catch (err) {
+      toast('Retry failed: ' + err.message);
+      loadDocs();
+    }
+  });
+
+  let isUploading = false;
   $('uploadForm').onsubmit = async e => {
     e.preventDefault();
-    const f = $('file').files[0];
+    if (isUploading) return;
+
+    const fileInput = $('file');
+    const submitBtn = $('uploadForm').querySelector('button[type="submit"]');
+    const f = fileInput.files[0];
     if (!f) return;
     if (f.size > 10485760) { toast('Maximum file size is 10 MB'); return; }
+
+    isUploading = true;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading...';
+    }
+    fileInput.disabled = true;
+
     try {
-      const r = await api('/api/documents/uploads', { method: 'POST', body: JSON.stringify({ filename: f.name }) });
+      toast('Calculating file checksum...');
+      const checksum = await computeSHA256(f);
+
+      const r = await api('/api/documents/uploads', {
+        method: 'POST',
+        body: JSON.stringify({ filename: f.name, checksum_sha256: checksum })
+      });
+
+      if (r.already_exists) {
+        if (r.status === 'ready') {
+          toast('Document already exists and is ready!');
+        } else {
+          toast(r.message || `Document is already ${r.status}.`);
+        }
+        fileInput.value = '';
+        loadDocs();
+        return;
+      }
+
+      toast('Uploading to S3...');
       const up = await fetch(r.upload_url, { method: 'PUT', headers: r.headers, body: f });
       if (!up.ok) throw Error('S3 upload failed');
-      toast('Uploaded to S3. Processing document now...');
-      await api('/api/documents/complete', { method: 'POST', body: JSON.stringify({ document_id: r.document_id }) });
-      toast('Document indexed in Pinecone!');
+
+      toast('Uploaded to S3. Ingesting and indexing document...');
+      await api('/api/documents/complete', {
+        method: 'POST',
+        body: JSON.stringify({ document_id: r.document_id })
+      });
+
+      toast('Document indexed in Pinecone successfully!');
+      fileInput.value = '';
       loadDocs();
-    } catch (err) { toast(err.message); }
+    } catch (err) {
+      toast(err.message);
+      loadDocs();
+    } finally {
+      isUploading = false;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Upload document';
+      }
+      fileInput.disabled = false;
+    }
   };
 
   /* ---------- Metrics ---------- */
