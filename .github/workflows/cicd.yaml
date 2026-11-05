@@ -17,6 +17,10 @@ concurrency:
   group: atlas-deployment
   cancel-in-progress: false
 
+# ECR repository region (confirmed from AWS console)
+env:
+  ECR_REGION: ap-southeast-2
+
 jobs:
 
   # ==========================================
@@ -59,7 +63,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ap-southeast-2
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -70,6 +74,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ github.sha }}
+
         run: |
           set -euo pipefail
 
@@ -81,7 +86,7 @@ jobs:
           echo "Building Docker image..."
           docker build -t "$IMAGE" .
 
-          echo "Pushing image to Amazon ECR..."
+          echo "Pushing Docker image to ECR..."
           docker push "$IMAGE"
 
           echo "Docker image pushed successfully"
@@ -108,7 +113,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ap-southeast-2
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -120,9 +125,10 @@ jobs:
       - name: Construct ECR Image URI
         id: image
         env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REGION: ap-southeast-2
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ github.sha }}
+
         run: |
           set -euo pipefail
 
@@ -130,7 +136,7 @@ jobs:
             --query Account \
             --output text)
 
-          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${ECR_REGION}.amazonaws.com"
 
           IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
@@ -144,6 +150,7 @@ jobs:
       - name: Pull Docker Image
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+
         run: |
           set -euo pipefail
           docker pull "$IMAGE"
@@ -154,28 +161,34 @@ jobs:
 
       - name: Validate Application Secrets
         env:
+          # Application AWS region - keep existing secret
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
 
+          # Bedrock
           BEDROCK_EMBED_MODEL: ${{ secrets.BEDROCK_EMBED_MODEL }}
           BEDROCK_CHAT_MODEL: ${{ secrets.BEDROCK_CHAT_MODEL }}
           EMBED_DIM: ${{ secrets.EMBED_DIM }}
 
+          # Pinecone
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
           PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
           PINECONE_REGION: ${{ secrets.PINECONE_REGION }}
           PINECONE_READY_TIMEOUT: ${{ secrets.PINECONE_READY_TIMEOUT }}
 
+          # PostgreSQL
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+          # RIUS Observability
           RIUS_API_KEY: ${{ secrets.RIUS_API_KEY }}
           RIUS_SERVICE_NAME: ${{ secrets.RIUS_SERVICE_NAME }}
           RIUS_DISABLED: ${{ secrets.RIUS_DISABLED }}
           RIUS_CAPTURE_CONTENT: ${{ secrets.RIUS_CAPTURE_CONTENT }}
 
+          # Application
           HITL_ENABLED: ${{ secrets.HITL_ENABLED }}
           MEMORY_TURNS: ${{ secrets.MEMORY_TURNS }}
 
@@ -222,14 +235,14 @@ jobs:
           docker rm -f atlas-enterprise-ai || true
 
       # ----------------------------------------
-      # START NEW CONTAINER WITH GITHUB SECRETS
+      # START NEW CONTAINER
       # ----------------------------------------
 
       - name: Start New Container
         env:
           IMAGE: ${{ steps.image.outputs.image }}
 
-          # AWS
+          # Application AWS configuration
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
