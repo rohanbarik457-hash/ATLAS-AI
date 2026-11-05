@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATLAS | Enterprise AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <h1 class="logo">✦ ATLAS <small>Enterprise AI</small></h1>
+    <div class="top-actions">
+      <button class="btn-new" id="newChat"><i class="fa-solid fa-plus"></i> New chat</button>
+      <input class="search-input" id="searchInput" type="text" placeholder="Search chats..." hidden>
+      <button class="btn-search" id="searchBtn" aria-label="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+    </div>
+
+    <!-- Workspace Tabs -->
+    <div class="section-head"><span>WORKSPACE</span></div>
+    <nav class="workspace-nav">
+      <button class="nav active" id="chatTab"><i class="fa-regular fa-comments"></i> Knowledge Chat</button>
+      <button class="nav" id="docsTab"><i class="fa-regular fa-folder-open"></i> Documents</button>
+      <button class="nav" id="approvalTab"><i class="fa-solid fa-check-circle"></i> Approvals</button>
+      <button class="nav" id="adminTab"><i class="fa-solid fa-chart-bar"></i> Metrics</button>
+    </nav>
+
+    <div class="section-head"><span>Your conversations</span><button class="link" id="clearAll">Clear All</button></div>
+    <nav class="chat-list" id="chatList"></nav>
+    <div class="side-bottom">
+      <button class="pill-btn" id="settingsBtn"><i class="fa-solid fa-gear"></i> Settings</button>
+      <div class="pill-btn user"><i class="fa-solid fa-user-circle" style="font-size:22px;color:#8193af"></i><span id="userName">Atlas User</span></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <button class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar"><i class="fa-solid fa-bars"></i></button>
+
+    <!-- ===== Chat View ===== -->
+    <section id="chatView" class="panel-view">
+      <div class="panel-header">
+        <span class="eyebrow">YOUR WORKSPACE / KNOWLEDGE</span>
+        <h2 id="heading">Ask your organization's knowledge</h2>
+        <div class="pill-badge">● AWS-powered</div>
+      </div>
+      <section class="chat-scroll" id="chatScroll"><div class="chat-col" id="chatCol"></div></section>
+      <div class="fade"></div>
+      <div class="composer">
+        <span class="ai-dot"><i class="fa-solid fa-brain"></i></span>
+        <input id="msgInput" type="text" placeholder="Ask a question about company knowledge..." autocomplete="off">
+        <button class="send" id="sendBtn" aria-label="Send"><i class="fa-regular fa-paper-plane"></i></button>
+      </div>
+      <div class="hint">Answers may be inaccurate. Verify source passages before taking action.</div>
+    </section>
+
+    <!-- ===== Documents View ===== -->
+    <section id="docsView" class="panel-view hidden">
+      <div class="panel-header">
+        <span class="eyebrow">YOUR WORKSPACE / DOCUMENTS</span>
+        <h2>Knowledge library</h2>
+      </div>
+      <div class="docs-content">
+        <p class="docs-desc">Upload an approved PDF, DOCX, TXT or Markdown file. Use non-sensitive demo documents only.</p>
+        <form id="uploadForm" class="upload-form">
+          <input id="file" type="file" accept=".pdf,.docx,.txt,.md" required>
+          <button type="submit" class="btn primary">Upload document</button>
+        </form>
+        <div id="docs" class="docs-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== Approvals View ===== -->
+    <section id="approvalView" class="panel-view hidden">
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">YOUR WORKSPACE / APPROVALS</span>
+          <h2>Human-in-the-loop approvals</h2>
+          <p class="sub">Review pending requests. Approving records a decision only; no document is deleted or exported.</p>
+        </div>
+        <button type="button" class="btn" id="refreshApprovals"><i class="fa-solid fa-rotate"></i> Refresh</button>
+      </div>
+      <div id="approvalSummary" class="approval-summary" role="status"></div>
+      <div id="approvalList" class="approval-list" aria-live="polite"></div>
+    </section>
+
+    <!-- ===== Metrics View ===== -->
+    <section id="adminView" class="panel-view hidden">
+      <div class="panel-header">
+        <span class="eyebrow">YOUR WORKSPACE / METRICS</span>
+        <h2>Workspace metrics</h2>
+      </div>
+      <div class="metrics-content">
+        <div class="metrics-card">
+          <h3><i class="fa-solid fa-file-lines"></i> Document Metrics</h3>
+          <pre id="metrics">Loading metrics...</pre>
+        </div>
+        <div class="metrics-card">
+          <h3><i class="fa-solid fa-shield-halved"></i> Guardrail Events</h3>
+          <pre id="guardrailMetrics">Loading guardrail metrics...</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Upgrade tab -->
+    <button class="upgrade" id="upgradeBtn"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Upgrade to Pro</span></button>
+  </main>
+</div>
+
+<div class="modal-back" id="modal" hidden>
+  <div class="modal"><h2 id="modalTitle"></h2><div id="modalBody"></div><div class="modal-actions" id="modalActions"></div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
