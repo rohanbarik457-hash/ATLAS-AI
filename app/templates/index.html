@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ATLAS | Enterprise AI</title>
+<script>
+  (function(){
+    try {
+      var s = JSON.parse(localStorage.getItem('atlas.settings') || '{}');
+      var t = s.theme || 'light';
+      if (t === 'system') {
+        t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    } catch(e) {}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,7 +28,7 @@
   <aside class="sidebar" id="sidebar">
     <h1 class="logo">✦ ATLAS <small>Enterprise AI</small></h1>
     <div class="top-actions">
-      <button class="btn-new" id="newChat"><i class="fa-solid fa-plus"></i> New chat</button>
+      <button class="btn-new" id="newChat"><i class="fa-solid fa-plus"></i> New conversation</button>
       <input class="search-input" id="searchInput" type="text" placeholder="Search chats..." hidden>
       <button class="btn-search" id="searchBtn" aria-label="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
     </div>
@@ -25,16 +37,16 @@
     <div class="section-head"><span>WORKSPACE</span></div>
     <nav class="workspace-nav">
       <button class="nav active" id="chatTab"><i class="fa-regular fa-comments"></i> Knowledge Chat</button>
-      <button class="nav" id="docsTab"><i class="fa-regular fa-folder-open"></i> Documents</button>
+      <button class="nav" id="docsTab"><i class="fa-regular fa-folder-open"></i> Knowledge Library</button>
       <button class="nav" id="approvalTab"><i class="fa-solid fa-check-circle"></i> Approvals</button>
-      <button class="nav" id="adminTab"><i class="fa-solid fa-chart-bar"></i> Metrics</button>
+      <button class="nav" id="adminTab"><i class="fa-solid fa-chart-bar"></i> Workspace Metrics</button>
     </nav>
 
-    <div class="section-head"><span>Your conversations</span><button class="link" id="clearAll">Clear All</button></div>
+    <div class="section-head"><span>Conversations</span><button class="link" id="clearAll">Clear All</button></div>
     <nav class="chat-list" id="chatList"></nav>
     <div class="side-bottom">
       <button class="pill-btn" id="settingsBtn"><i class="fa-solid fa-gear"></i> Settings</button>
-      <div class="pill-btn user"><i class="fa-solid fa-user-circle" style="font-size:22px;color:#8193af"></i><span id="userName">Atlas User</span></div>
+      <div class="pill-btn user"><i class="fa-solid fa-user-circle" style="font-size:22px;color:var(--text-muted)"></i><span id="userName">Atlas User</span></div>
     </div>
   </aside>
 
@@ -45,32 +57,58 @@
     <!-- ===== Chat View ===== -->
     <section id="chatView" class="panel-view">
       <div class="panel-header">
-        <span class="eyebrow">YOUR WORKSPACE / KNOWLEDGE</span>
-        <h2 id="heading">Ask your organization's knowledge</h2>
-        <div class="pill-badge">● AWS-powered</div>
+        <div>
+          <span class="eyebrow">YOUR WORKSPACE / KNOWLEDGE</span>
+          <h2 id="heading">Ask your organization's knowledge</h2>
+        </div>
+        <div class="pill-badge">● AWS Bedrock · RAG Grounded</div>
       </div>
       <section class="chat-scroll" id="chatScroll"><div class="chat-col" id="chatCol"></div></section>
       <div class="fade"></div>
-      <div class="composer">
-        <span class="ai-dot"><i class="fa-solid fa-brain"></i></span>
-        <input id="msgInput" type="text" placeholder="Ask a question about company knowledge..." autocomplete="off">
-        <button class="send" id="sendBtn" aria-label="Send"><i class="fa-regular fa-paper-plane"></i></button>
+      
+      <!-- Composer Container with Multiline Textarea -->
+      <div class="composer-container">
+        <div class="composer" id="composerBox">
+          <span class="ai-dot"><i class="fa-solid fa-brain"></i></span>
+          <textarea id="msgInput" rows="1" placeholder="Ask a question about your documents... (Shift+Enter for newline)"></textarea>
+          <button class="send" id="sendBtn" aria-label="Send" title="Send message"><i class="fa-solid fa-arrow-up"></i></button>
+        </div>
+        <div class="hint">Grounded RAG answers from your approved documents. Always verify source citations.</div>
       </div>
-      <div class="hint">Answers may be inaccurate. Verify source passages before taking action.</div>
     </section>
 
     <!-- ===== Documents View ===== -->
     <section id="docsView" class="panel-view hidden">
       <div class="panel-header">
-        <span class="eyebrow">YOUR WORKSPACE / DOCUMENTS</span>
-        <h2>Knowledge library</h2>
+        <div>
+          <span class="eyebrow">YOUR WORKSPACE / DOCUMENTS</span>
+          <h2>Knowledge Library</h2>
+          <p class="sub">Upload, index, and manage organizational knowledge documents for vector retrieval.</p>
+        </div>
       </div>
       <div class="docs-content">
-        <p class="docs-desc">Upload an approved PDF, DOCX, TXT or Markdown file. Use non-sensitive demo documents only.</p>
-        <form id="uploadForm" class="upload-form">
-          <input id="file" type="file" accept=".pdf,.docx,.txt,.md" required>
-          <button type="submit" class="btn primary">Upload document</button>
-        </form>
+        <div class="docs-header-card">
+          <div class="docs-header-info">
+            <h3>Upload Knowledge Document</h3>
+            <p>Upload authorized PDF, DOCX, TXT, or Markdown documents. Files are hashed (SHA-256) for idempotency, stored in Amazon S3, and indexed into Pinecone vector storage.</p>
+          </div>
+          <form id="uploadForm" class="upload-form">
+            <div class="file-picker-wrapper">
+              <input id="file" type="file" accept=".pdf,.docx,.txt,.md" required>
+              <label for="file" class="file-picker-label" id="filePickerLabel">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span id="filePickerText">Choose file or drag & drop</span>
+                <small>PDF, DOCX, TXT, MD up to 10MB</small>
+              </label>
+            </div>
+            <button type="submit" class="btn primary" id="uploadBtn"><i class="fa-solid fa-upload"></i> Upload & Ingest</button>
+          </form>
+        </div>
+
+        <div class="section-title-bar">
+          <h3>Indexed Documents</h3>
+          <span class="doc-count-badge" id="docCountBadge">0 documents</span>
+        </div>
         <div id="docs" class="docs-list"></div>
       </div>
     </section>
@@ -92,23 +130,26 @@
     <!-- ===== Metrics View ===== -->
     <section id="adminView" class="panel-view hidden">
       <div class="panel-header">
-        <span class="eyebrow">YOUR WORKSPACE / METRICS</span>
-        <h2>Workspace metrics</h2>
+        <div>
+          <span class="eyebrow">YOUR WORKSPACE / METRICS</span>
+          <h2>Workspace Operational Overview</h2>
+          <p class="sub">Telemetry, vector document counts, user feedback, and guardrail audit event distribution.</p>
+        </div>
       </div>
       <div class="metrics-content">
         <div class="metrics-card">
-          <h3><i class="fa-solid fa-file-lines"></i> Document Metrics</h3>
+          <h3><i class="fa-solid fa-file-lines"></i> Document & Feedback Metrics</h3>
           <pre id="metrics">Loading metrics...</pre>
         </div>
         <div class="metrics-card">
-          <h3><i class="fa-solid fa-shield-halved"></i> Guardrail Events</h3>
+          <h3><i class="fa-solid fa-shield-halved"></i> Guardrail Safety Audit Events</h3>
           <pre id="guardrailMetrics">Loading guardrail metrics...</pre>
         </div>
       </div>
     </section>
 
     <!-- Upgrade tab -->
-    <button class="upgrade" id="upgradeBtn"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Upgrade to Pro</span></button>
+    <button class="upgrade" id="upgradeBtn"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Enterprise Pro</span></button>
   </main>
 </div>
 
